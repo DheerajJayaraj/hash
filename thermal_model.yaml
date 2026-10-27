@@ -1,0 +1,27 @@
+﻿# Illustrative values only — replace with measured or sourced values.
+# Mass: kg; specific heat capacity: J/(kg K); conductance: W/K.
+
+thermal_properties:
+  hot_roller:
+    mass_kg: 2.0
+    specific_heat_j_kg_k: 500.0
+  belt_sorbent:
+    mass_kg: 0.5
+    specific_heat_j_kg_k: 1000.0
+  intermediate_loop:
+    mass_kg: 1.0
+    specific_heat_j_kg_k: 4180.0
+  cooling_roller:
+    mass_kg: 2.0
+    specific_heat_j_kg_k: 500.0
+
+conductances_w_k:
+  hot_roller_to_belt: 10.0
+  belt_to_intermediate_loop: 5.0
+  belt_to_cooling_roller: 8.0
+
+ambient_loss_conductance_w_k:
+  hot_roller: 2.0
+  belt_sorbent: 1.0
+  intermediate_loop: 1.0
+  cooling_roller: 2.0
