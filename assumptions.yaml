@@ -1,0 +1,256 @@
+project:
+  name:
+    value: "Heat-linked roller-belt DAC simulation"
+    unit: "text"
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: null
+
+  ambient_temperature:
+    value: 298.15
+    unit: K
+    tag: ASSUMED
+    source: "Project master prompt: 25 C baseline"
+    range: [273.15, 323.15]
+
+  air_co2_concentration:
+    value: 0.72
+    unit: g/m3
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 2.0]
+
+  sorbent_areal_loading:
+    value: 0.3
+    unit: kg/m2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.001, 10.0]
+
+  composite_areal_loading:
+    value: 0.5
+    unit: kg/m2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.001, 20.0]
+
+  uptake_rate:
+    value: 0.065
+    unit: mmol/g/min
+    tag: ASSUMED
+    source: "Project master prompt; published project target range 0.0435-0.087; verify before citing"
+    range: [0.001, 1.0]
+
+  working_capacity:
+    value: 1.0
+    unit: mmol/g
+    tag: ASSUMED
+    source: "Project master prompt regression baseline"
+    range: [0.001, 10.0]
+
+  hot_roller_temperature:
+    value: 378.15
+    unit: K
+    tag: ASSUMED
+    source: "Project master prompt: 105 C nominal"
+    range: [298.15, 473.15]
+
+  intermediate_loop_temperature:
+    value: 338.15
+    unit: K
+    tag: ASSUMED
+    source: "Project master prompt: 65 C nominal"
+    range: [298.15, 373.15]
+
+  cooling_roller_temperature:
+    value: 298.15
+    unit: K
+    tag: ASSUMED
+    source: "Project master prompt: 25 C nominal"
+    range: [273.15, 323.15]
+
+  desorption_heat:
+    value: 1.6
+    unit: MWh/t_CO2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 20.0]
+
+  thermal_demand:
+    value: 1.84
+    unit: MWh/t_CO2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 20.0]
+
+  electrical_demand:
+    value: 0.22
+    unit: MWh/t_CO2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 10.0]
+
+  reactor_heat_reuse:
+    value: 0.31
+    unit: MWh/t_CO2
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 10.0]
+
+  methanol_energy:
+    value: 5.53
+    unit: MWh/t_methanol
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 50.0]
+
+  electrolysis_energy:
+    value: 9.8
+    unit: MWh/t_methanol
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 100.0]
+
+  co2_per_methanol:
+    value: 1.375
+    unit: t_CO2/t_methanol
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 5.0]
+
+  heat_recovery_base_factor:
+    value: 0.85
+    unit: dimensionless
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: [0.0, 1.0]
+
+  prototype:
+    value:
+      belt_width: 0.2
+      usable_belt_width: 0.18
+      belt_thickness_min: 0.0005
+      belt_thickness_max: 0.001
+      nominal_loop_length: 1.98
+      end_roller_diameter: 0.15
+      end_roller_face_width: 0.22
+      intermediate_roller_diameter: 0.1
+      roller_spacing: 0.65
+      wall_thickness: 0.01
+      slot_height: 0.003
+      slot_width: 0.22
+      exposed_length: 0.3
+      exposed_area: 0.054
+      fan_face_area: 6.16
+      hot_roller_wrap_angle: 2.0943951024
+      intermediate_wrap_angle: 2.0943951024
+      heater_power: 500.0
+      loop_flow_min: 0.5
+      loop_flow_max: 1.0
+      fan_flow_min: 100.0
+      fan_flow_max: 200.0
+      fan_pressure_min: 50.0
+      fan_pressure_max: 100.0
+      belt_speed_min: 0.0005
+      belt_speed_max: 0.005
+      nominal_belt_speed: 0.002
+      nominal_sorbent_mass: 0.107
+      exposed_sorbent_mass: 0.016
+      expected_capture_rate: 0.0028
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt; prototype geometry and expected bench results"
+    range: null
+
+  geometry_units:
+    value:
+      belt_width: m
+      usable_belt_width: m
+      belt_thickness_min: m
+      belt_thickness_max: m
+      nominal_loop_length: m
+      end_roller_diameter: m
+      end_roller_face_width: m
+      intermediate_roller_diameter: m
+      roller_spacing: m
+      wall_thickness: m
+      slot_height: m
+      slot_width: m
+      exposed_length: m
+      exposed_area: m2
+      fan_face_area: m2
+      hot_roller_wrap_angle: rad
+      intermediate_wrap_angle: rad
+      heater_power: W
+      loop_flow_min: L/min
+      loop_flow_max: L/min
+      fan_flow_min: m3/h
+      fan_flow_max: m3/h
+      fan_pressure_min: Pa
+      fan_pressure_max: Pa
+      belt_speed_min: m/s
+      belt_speed_max: m/s
+      nominal_belt_speed: m/s
+      nominal_sorbent_mass: kg
+      exposed_sorbent_mass: kg
+      expected_capture_rate: kg/h
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt; explicit units for prototype inputs"
+    range: null
+
+  scale_up:
+    value:
+      target_capture_rate: 16.55
+      target_sorbent_mass: 96.0
+      single_layer_sorbent_mass: 1.8
+      single_layer_capture_rate: 0.3
+      high_uptake_rate: 0.3
+      high_uptake_sorbent_mass: 21.0
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt regression targets"
+    range: null
+
+  scale_up_units:
+    value:
+      target_capture_rate: kg/h
+      target_sorbent_mass: kg
+      single_layer_sorbent_mass: kg
+      single_layer_capture_rate: kg/h
+      high_uptake_rate: mmol/g/min
+      high_uptake_sorbent_mass: kg
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: null
+
+  regression_targets:
+    value:
+      fluid_loop_efficiency_k3: 43.5
+      batch_efficiency: 40.3
+      capture_energy_k3: 1.75
+      recovery_k1: 0.425
+      recovery_k2: 0.5666666667
+      recovery_k3: 0.6375
+      hot_contact_time_at_1mm_s: 236.0
+      intermediate_contact_time_at_1mm_s: 105.0
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt regression targets; not measurements"
+    range: null
+
+  regression_units:
+    value:
+      fluid_loop_efficiency_k3: percent
+      batch_efficiency: percent
+      capture_energy_k3: MWh/t_CO2
+      recovery_k1: dimensionless
+      recovery_k2: dimensionless
+      recovery_k3: dimensionless
+      hot_contact_time_at_1mm_s: s
+      intermediate_contact_time_at_1mm_s: s
+    unit: "mapping"
+    tag: ASSUMED
+    source: "Project master prompt"
+    range: null
