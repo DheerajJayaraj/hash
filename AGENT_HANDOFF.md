@@ -30,6 +30,7 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 - **Milestone 7: Physical prototype readiness** — IMPLEMENTED (Test plan & validation criteria documented)
 - **Sprint Completion: Hot-Roller Temperature Control & Trustworthy Balances** — IMPLEMENTED & TESTED (126 passed)
 - **Live Showcase Sprint: Interactive Browser Dashboard & Data Export** — IMPLEMENTED & TESTED (129 passed)
+- **Showcase Recovery & Debugging Sprint: Parameter Separation & Balance Integrity** — IMPLEMENTED & TESTED (138 passed)
 
 ## 5. File Inventory in Isolated Workspace
 
@@ -54,6 +55,7 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 2. `tests/test_sorbent_cycle.py`: Tests for sorbent kinetics, equilibrium capacity, belt movement, temperature control, and cycle mass/energy balances.
 3. `tests/test_methanol.py`: Tests for methanol stoichiometry, mass conservation, and electrolysis energy requirements.
 4. `tests/test_dashboard.py`: Tests for dashboard validation, simulation API, and HTTP endpoints.
+5. `tests/test_regression_debug.py`: Comprehensive regression tests covering independent temperature parameters, setpoint error separation, zero-desorption thermodynamics, mass/energy conservation, and export fidelity.
 
 ### Added Scripts and Workflows:
 1. `scripts/run_dac_cycle_simulation.py`: Reproducible multi-cycle transient simulation exporting CSV, JSON report, and PNG plots.
@@ -95,7 +97,8 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 - Baseline: **107 passed in 1.19s**.
 - Post-Milestones 1-7: **122 passed in 0.52s**.
 - Post-Sprint Completion: **126 passed in 1.14s**.
-- Post-Dashboard Showcase: **129 passed, 0 failed in 2.90s**.
+- Post-Dashboard Showcase: **129 passed in 2.90s**.
+- Post-Showcase Recovery & Debugging: **138 passed, 0 failed in 7.88s**.
 - `git diff --check`: Clean, zero trailing whitespace or formatting warnings.
 
 ## 9. Live Dashboard Launch Instructions
