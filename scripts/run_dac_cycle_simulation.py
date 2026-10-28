@@ -127,10 +127,13 @@ def main() -> None:
         "simulation_duration_s": result.duration_s,
         "temperature_control": {
             "controller_type": "pid",
-            "target_temperature_k": result.target_hot_roller_temp_k,
+            "initial_temperature_k": round(result.initial_hot_roller_temp_k, 3),
+            "target_temperature_k": round(result.target_hot_roller_temp_k, 3),
+            "final_temperature_k": round(result.hot_roller_temp_k[-1], 3),
             "max_hot_roller_temp_k": round(result.max_hot_roller_temp_k, 3),
             "min_hot_roller_temp_k": round(result.min_hot_roller_temp_k, 3),
             "temperature_overshoot_k": round(result.temperature_overshoot_k, 3),
+            "final_setpoint_error_k": round(result.final_setpoint_error_k, 3),
             "average_heater_power_w": round(result.average_heater_power_w, 2),
             "maximum_heater_power_w": 500.0,
         },
@@ -180,7 +183,8 @@ def main() -> None:
     print("DAC FULL-CYCLE COUPLED SIMULATION COMPLETED (WITH TEMPERATURE CONTROL)")
     print("=" * 65)
     print(f"Duration: {result.duration_s:.1f} s (1.0 full loop revolution)")
-    print(f"Hot Roller Temp: Target {result.target_hot_roller_temp_k:.2f} K | Max {result.max_hot_roller_temp_k:.2f} K | Overshoot {result.temperature_overshoot_k:.2f} K")
+    print(f"Hot Roller Temp: Target {result.target_hot_roller_temp_k:.2f} K ({result.target_hot_roller_temp_k - 273.15:.1f} °C) | Init {result.initial_hot_roller_temp_k:.2f} K | Final {result.hot_roller_temp_k[-1]:.2f} K")
+    print(f"Overshoot: +{result.temperature_overshoot_k:.2f} K | Final Setpoint Error: {result.final_setpoint_error_k:+.2f} K")
     print(f"Average Heater Power: {result.average_heater_power_w:.1f} W (Throttled from 500 W max)")
     print(f"Predicted Capture Rate: {result.capture_rate_g_h:.3f} g CO2/h")
     print(f"CO2 Captured: {result.co2_captured_kg * 1000.0:.3f} g")

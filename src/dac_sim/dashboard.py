@@ -48,6 +48,8 @@ DEFAULT_PARAMS: dict[str, Any] = {
 }
 
 _LATEST_SIMULATION_DATA: dict[str, Any] | None = None
+_LATEST_SIMULATION_FAILED: bool = False
+_LATEST_SIMULATION_ERROR: str | None = None
 
 
 def load_assumptions_dict() -> dict[str, Any]:
@@ -224,6 +226,20 @@ def run_simulation_api(raw_params: dict[str, Any]) -> dict[str, Any]:
     # Save to disk outputs/
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "dac_cycle_history.csv").write_text(full_csv_text, encoding="utf-8")
+    (OUTPUT_DIR / "dac_cycle_plot.png").write_bytes(plot_buf.getvalue())
+
+    # Formulate contextual warnings and physical state descriptors
+    rec_warning: str | None = None
+    if result.heater_energy_j <= 1.0:
+        rec_warning = "Heater input negligible; recovery ratio not applicable."
+    elif result.sensible_energy_change_j < -5000.0 and result.heat_recovery_ratio > 0.80:
+        rec_warning = "Transient cooldown; stored sensible thermal energy inflates apparent ratio."
+
+    desorp_status = (
+        "zero_desorption_below_onset"
+        if result.co2_released_kg <= 0.0
+        else "active_desorption"
+    )
 
     response_data = {
         "status": "success",
@@ -234,17 +250,26 @@ def run_simulation_api(raw_params: dict[str, Any]) -> dict[str, Any]:
             "capture_rate_g_h": round(result.capture_rate_g_h, 3),
             "co2_released_g": round(result.co2_released_kg * 1000.0, 3),
             "co2_sorbent_accumulation_g": round(result.co2_sorbent_delta_kg * 1000.0, 3),
+            "hot_roller_initial_c": round(result.initial_hot_roller_temp_k - 273.15, 2),
             "hot_roller_final_c": round(result.hot_roller_temp_k[-1] - 273.15, 2),
             "hot_roller_max_c": round(result.max_hot_roller_temp_k - 273.15, 2),
             "hot_roller_target_c": round(params["target_hot_roller_temp_c"], 2),
             "temperature_overshoot_k": round(result.temperature_overshoot_k, 2),
+            "final_setpoint_error_k": round(result.final_setpoint_error_k, 2),
             "average_heater_power_w": round(result.average_heater_power_w, 1),
             "total_heater_energy_kj": round(result.heater_energy_j / 1000.0, 2),
             "fluid_heat_recovered_kj": round(result.fluid_heat_recovered_j / 1000.0, 2),
             "heat_recovery_ratio_pct": round(result.heat_recovery_ratio * 100.0, 1),
+            "heat_recovery_warning": rec_warning,
+            "desorption_status": desorp_status,
             "gross_specific_energy_mwh_t": round(result.specific_thermal_energy_mwh_t, 2),
             "net_specific_energy_mj_kg": round(result.net_specific_thermal_energy_mj_kg, 2),
             "net_specific_energy_kwh_kg": round(result.net_specific_thermal_energy_mj_kg / 3.6, 2),
+            "specific_energy_per_released_mj_kg": (
+                round(result.specific_energy_per_released_mj_kg, 2)
+                if result.specific_energy_per_released_mj_kg is not None
+                else None
+            ),
             "theoretical_reaction_enthalpy_mwh_t": 1.60,
             "mass_balance_residual_kg": f"{result.mass_balance_residual_kg:.3e}",
             "energy_balance_residual_j": f"{result.energy_balance_residual_j:.3e}",
@@ -287,7 +312,10 @@ def run_simulation_api(raw_params: dict[str, Any]) -> dict[str, Any]:
         "csv_text": full_csv_text,
     }
 
+    global _LATEST_SIMULATION_DATA, _LATEST_SIMULATION_FAILED, _LATEST_SIMULATION_ERROR
     _LATEST_SIMULATION_DATA = response_data
+    _LATEST_SIMULATION_FAILED = False
+    _LATEST_SIMULATION_ERROR = None
     with (OUTPUT_DIR / "dac_cycle_report.json").open("w", encoding="utf-8") as f:
         json.dump(response_data, f, indent=2)
 
@@ -650,6 +678,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
           <input type="number" id="target_hot_roller_temp_c" min="60" max="140" step="1" value="105">
         </div>
         <div class="form-group">
+          <label for="initial_hot_roller_temp_c">Initial Hot Roller Temp (°C):</label>
+          <input type="number" id="initial_hot_roller_temp_c" min="20" max="150" step="1" value="105">
+        </div>
+        <div class="form-group">
           <label for="heater_power_w">Max Heater Power (W):</label>
           <input type="number" id="heater_power_w" min="50" max="1500" step="25" value="500">
         </div>
@@ -691,7 +723,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <span>Verified Simulation KPIs (Current Run)</span>
         <span id="run-duration-tag" class="badge badge-sim">Duration: 990.0 s</span>
       </div>
-      <div class="kpi-grid">
+      <div class="kpi-grid" id="kpi-container">
         <div class="kpi-card">
           <span class="kpi-label">Capture Rate</span>
           <span class="kpi-value" id="kpi-capture-rate">2.355 <span style="font-size:0.9rem">g/h</span></span>
@@ -705,7 +737,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="kpi-card">
           <span class="kpi-label">Hot Roller Temp</span>
           <span class="kpi-value" id="kpi-hot-temp">105.0 <span style="font-size:0.9rem">°C</span></span>
-          <span class="kpi-sub" id="kpi-overshoot">Overshoot: +0.11 K</span>
+          <span class="kpi-sub" id="kpi-overshoot">Target: 105.0°C | Init: 105.0°C<br>Overshoot: +0.11 K | Error: +0.02 K</span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">Avg Heater Power</span>
@@ -720,17 +752,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="kpi-card">
           <span class="kpi-label">Specific Thermal Energy</span>
           <span class="kpi-value" id="kpi-gross-energy">80.8 <span style="font-size:0.9rem">MWh/t</span></span>
-          <span class="kpi-sub" id="kpi-net-energy">Net: 90.25 MJ/kg CO2</span>
+          <span class="kpi-sub" id="kpi-net-energy">Net: 90.25 MJ/kg CO2 (captured)</span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">Mass Balance Residual</span>
           <span class="kpi-value" id="kpi-mass-residual" style="font-size:1.15rem">&lt; 10⁻¹² <span style="font-size:0.8rem">kg</span></span>
-          <span class="kpi-sub">Exact Conservation Closed</span>
+          <span class="kpi-sub">Exact Numerical Conservation</span>
         </div>
         <div class="kpi-card">
           <span class="kpi-label">Energy Balance Residual</span>
           <span class="kpi-value" id="kpi-energy-residual" style="font-size:1.15rem">&lt; 10⁻⁸ <span style="font-size:0.8rem">J</span></span>
-          <span class="kpi-sub">First Law Exact Match</span>
+          <span class="kpi-sub">First Law Numerical Match</span>
         </div>
       </div>
     </section>
@@ -819,6 +851,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <ul style="margin-left: 1.25rem; margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.25rem;">
           <li><strong>Bench Thermal Intensity:</strong> At bench scale, standby ambient losses on a 2 kg metal roller dominate specific energy (~80 MWh/t CO2). The intrinsic sorbent reaction enthalpy is 1.6 MWh/t CO2. Scale-up drops thermal demand to 1.5–2.0 MWh/t CO2.</li>
           <li><strong>Kinetics Limitation:</strong> Capture rate is 100% sorbent- and kinetics-limited (150 m³/h air delivers &gt;25x more CO2 than sorbent can adsorb).</li>
+          <li><strong>Numerical Balances vs Experimental Validation:</strong> First Law energy and mass residuals closing to &lt; 10⁻⁸ J / &lt; 10⁻¹² kg demonstrate mathematical consistency of the Euler time integration, not empirical hardware validation.</li>
+          <li><strong>Sensible Heat Recovery:</strong> The fluid loop metric tracks sensible heat extracted at the intermediate recovery roller. Closed-loop reuse for sorbent pre-heating is a model assumption, not an independently measured recovery efficiency.</li>
+          <li><strong>Desorption Threshold:</strong> CO2 release requires sorbent loading to exceed thermodynamic equilibrium capacity (q &gt; q_eq(T)). At setpoints ≤ 90°C, q_eq(90°C) ≈ 0.41 mol/kg exceeds sorbent loading (~0.22 mol/kg), correctly yielding zero desorption.</li>
           <li><strong>Methanol Scope:</strong> Methanol production is evaluated purely as a downstream stoichiometric and thermodynamic model; it is not physically integrated on the DAC test bench.</li>
         </ul>
       </div>
@@ -940,16 +975,38 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       const k = res.kpis;
       document.getElementById('kpi-capture-rate').innerHTML = `${k.capture_rate_g_h} <span style="font-size:0.9rem">g/h</span>`;
       document.getElementById('kpi-capture-total').textContent = `Total: ${k.co2_captured_g} g captured`;
-      document.getElementById('kpi-released').innerHTML = `${k.co2_released_g} <span style="font-size:0.9rem">g</span>`;
-      document.getElementById('kpi-accumulation').textContent = `Sorbent Δm: ${k.co2_sorbent_accumulation_g} g`;
+
+      if (k.co2_released_g <= 0) {
+        document.getElementById('kpi-released').innerHTML = `0.000 <span style="font-size:0.9rem">g</span>`;
+        document.getElementById('kpi-accumulation').innerHTML = `Sorbent Δm: +${k.co2_sorbent_accumulation_g} g <span style="color:#f59e0b">(q &lt; q<sub>eq</sub>: zero release)</span>`;
+      } else {
+        document.getElementById('kpi-released').innerHTML = `${k.co2_released_g} <span style="font-size:0.9rem">g</span>`;
+        document.getElementById('kpi-accumulation').textContent = `Sorbent Δm: +${k.co2_sorbent_accumulation_g} g`;
+      }
+
       document.getElementById('kpi-hot-temp').innerHTML = `${k.hot_roller_final_c} <span style="font-size:0.9rem">°C</span>`;
-      document.getElementById('kpi-overshoot').textContent = `Overshoot: +${k.temperature_overshoot_k} K`;
+      const errSign = k.final_setpoint_error_k >= 0 ? '+' : '';
+      document.getElementById('kpi-overshoot').innerHTML = `Target: ${k.hot_roller_target_c}°C | Init: ${k.hot_roller_initial_c}°C<br>Overshoot: +${k.temperature_overshoot_k} K | Setpoint Err: ${errSign}${k.final_setpoint_error_k} K`;
+
       document.getElementById('kpi-power').innerHTML = `${k.average_heater_power_w} <span style="font-size:0.9rem">W</span>`;
       document.getElementById('kpi-heater-energy').textContent = `Total: ${k.total_heater_energy_kj} kJ drawn`;
       document.getElementById('kpi-recovered').innerHTML = `${k.fluid_heat_recovered_kj} <span style="font-size:0.9rem">kJ</span>`;
-      document.getElementById('kpi-recovery-ratio').textContent = `Recovery: ${k.heat_recovery_ratio_pct}%`;
+
+      let recTxt = `Recovery: ${k.heat_recovery_ratio_pct}%`;
+      if (k.heat_recovery_warning) {
+        recTxt += ` <span style="color:#f59e0b" title="${k.heat_recovery_warning}">⚠️</span>`;
+      }
+      document.getElementById('kpi-recovery-ratio').innerHTML = recTxt;
+
       document.getElementById('kpi-gross-energy').innerHTML = `${k.gross_specific_energy_mwh_t} <span style="font-size:0.9rem">MWh/t</span>`;
-      document.getElementById('kpi-net-energy').textContent = `Net: ${k.net_specific_energy_mj_kg} MJ/kg CO2`;
+      let netTxt = `Net: ${k.net_specific_energy_mj_kg} MJ/kg CO2 (captured)`;
+      if (k.co2_released_g <= 0) {
+        netTxt += `<br><span style="color:#f59e0b">Per desorbed: N/A (no release)</span>`;
+      } else if (k.specific_energy_per_released_mj_kg !== null && k.specific_energy_per_released_mj_kg !== undefined) {
+        netTxt += `<br>Per desorbed: ${k.specific_energy_per_released_mj_kg} MJ/kg`;
+      }
+      document.getElementById('kpi-net-energy').innerHTML = netTxt;
+
       document.getElementById('kpi-mass-residual').textContent = `${k.mass_balance_residual_kg} kg`;
       document.getElementById('kpi-energy-residual').textContent = `${k.energy_balance_residual_j} J`;
       document.getElementById('run-duration-tag').textContent = `Duration: ${k.duration_s} s`;
@@ -979,6 +1036,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         duration_s: parseFloat(document.getElementById('duration_s').value),
         time_step_s: parseFloat(document.getElementById('time_step_s').value),
         target_hot_roller_temp_c: parseFloat(document.getElementById('target_hot_roller_temp_c').value),
+        initial_hot_roller_temp_c: parseFloat(document.getElementById('initial_hot_roller_temp_c').value),
         heater_power_w: parseFloat(document.getElementById('heater_power_w').value),
         heater_controller: document.getElementById('heater_controller').value,
         belt_speed_mm_s: parseFloat(document.getElementById('belt_speed_mm_s').value),
@@ -996,19 +1054,22 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         });
         const res = await resp.json();
         if (resp.ok && res.status === 'success') {
+          document.getElementById('kpi-container').style.opacity = '1.0';
           updateUI(res);
           badge.className = 'badge badge-success';
           badge.textContent = 'Engine Ready';
           showAlert('Simulation completed successfully! Balances closed.', true);
         } else {
+          document.getElementById('kpi-container').style.opacity = '0.45';
           badge.className = 'badge badge-warn';
           badge.textContent = 'Input Error';
-          showAlert('Simulation error: ' + (res.error || 'Unknown error'));
+          showAlert('Simulation error: ' + (res.error || 'Unknown error') + ' — current results marked stale.');
         }
       } catch (err) {
+        document.getElementById('kpi-container').style.opacity = '0.45';
         badge.className = 'badge badge-warn';
         badge.textContent = 'Network Error';
-        showAlert('Network or execution error: ' + err.message);
+        showAlert('Network or execution error: ' + err.message + ' — current results marked stale.');
       } finally {
         btn.disabled = false;
         btn.textContent = '▶ Run Simulation';
@@ -1019,6 +1080,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       document.getElementById('duration_s').value = 990;
       document.getElementById('time_step_s').value = 0.1;
       document.getElementById('target_hot_roller_temp_c').value = 105;
+      document.getElementById('initial_hot_roller_temp_c').value = 105;
       document.getElementById('heater_power_w').value = 500;
       document.getElementById('heater_controller').value = 'pid';
       document.getElementById('belt_speed_mm_s').value = 2.0;
@@ -1051,6 +1113,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        global _LATEST_SIMULATION_DATA
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -1069,13 +1132,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
 
         elif path == "/api/export/csv":
-            global _LATEST_SIMULATION_DATA
             if _LATEST_SIMULATION_DATA is None:
                 _LATEST_SIMULATION_DATA = run_simulation_api(DEFAULT_PARAMS)
             csv_content = _LATEST_SIMULATION_DATA["csv_text"]
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/csv")
-            self.send_header("Content-Disposition", 'attachment; filename="dac_simulation_history.csv"')
+            self.send_header("Content-Disposition", 'attachment; filename="dac_cycle_history.csv"')
             self.end_headers()
             self.wfile.write(csv_content.encode("utf-8"))
             return
@@ -1086,7 +1148,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             report_bytes = json.dumps(_LATEST_SIMULATION_DATA, indent=2).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Disposition", 'attachment; filename="dac_simulation_report.json"')
+            self.send_header("Content-Disposition", 'attachment; filename="dac_cycle_report.json"')
             self.end_headers()
             self.wfile.write(report_bytes)
             return
@@ -1097,7 +1159,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             png_bytes = base64.b64decode(_LATEST_SIMULATION_DATA["plot_base64"])
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Disposition", 'attachment; filename="dac_simulation_plot.png"')
+            self.send_header("Content-Disposition", 'attachment; filename="dac_cycle_plot.png"')
             self.end_headers()
             self.wfile.write(png_bytes)
             return
@@ -1107,6 +1169,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"404 Not Found")
 
     def do_POST(self) -> None:
+        global _LATEST_SIMULATION_DATA, _LATEST_SIMULATION_FAILED, _LATEST_SIMULATION_ERROR
         parsed = urlparse(self.path)
         path = parsed.path
 
@@ -1116,12 +1179,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 params = json.loads(body) if body else {}
                 results = run_simulation_api(params)
+                _LATEST_SIMULATION_DATA = results
+                _LATEST_SIMULATION_FAILED = False
+                _LATEST_SIMULATION_ERROR = None
                 resp_bytes = json.dumps(results).encode("utf-8")
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(resp_bytes)
             except Exception as exc:
+                _LATEST_SIMULATION_FAILED = True
+                _LATEST_SIMULATION_ERROR = str(exc)
                 err_payload = {"status": "error", "error": str(exc)}
                 resp_bytes = json.dumps(err_payload).encode("utf-8")
                 self.send_response(HTTPStatus.BAD_REQUEST)

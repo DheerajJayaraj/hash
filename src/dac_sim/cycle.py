@@ -183,10 +183,14 @@ class CycleSimulationResult:
 
     # Controller performance metrics
     target_hot_roller_temp_k: float = 378.15
+    initial_hot_roller_temp_k: float = 378.15
     max_hot_roller_temp_k: float = 378.15
     min_hot_roller_temp_k: float = 378.15
     temperature_overshoot_k: float = 0.0
+    final_setpoint_error_k: float = 0.0
     average_heater_power_w: float = 0.0
+    specific_energy_per_released_mj_kg: float | None = None
+    net_specific_energy_per_released_mj_kg: float | None = None
 
 
 def run_cycle_simulation(
@@ -546,15 +550,23 @@ def run_cycle_simulation(
         net_spec_energy_mj_kg = 0.0
         spec_energy_mwh_t = 0.0
 
+    if cum_co2_released_kg > 1e-9:
+        spec_energy_released_mj_kg = (cum_heater_energy_j / 1e6) / cum_co2_released_kg
+        net_spec_energy_released_mj_kg = (net_thermal_input_j / 1e6) / cum_co2_released_kg
+    else:
+        spec_energy_released_mj_kg = None
+        net_spec_energy_released_mj_kg = None
+
     heat_recovery_ratio = (
         fluid_recovered_j / cum_heater_energy_j
-        if cum_heater_energy_j > 0
+        if cum_heater_energy_j > 1e-6
         else 0.0
     )
 
     max_hot_k = max(hist_hot_k)
     min_hot_k = min(hist_hot_k)
     overshoot_k = max(0.0, max_hot_k - target_hot_roller_temp_k)
+    final_error_k = hist_hot_k[-1] - target_hot_roller_temp_k
     avg_power_w = cum_heater_energy_j / duration_s if duration_s > 0 else 0.0
 
     return CycleSimulationResult(
@@ -590,8 +602,12 @@ def run_cycle_simulation(
         net_specific_thermal_energy_mj_kg=net_spec_energy_mj_kg,
         heat_recovery_ratio=heat_recovery_ratio,
         target_hot_roller_temp_k=target_hot_roller_temp_k,
+        initial_hot_roller_temp_k=initial_hot_temp,
         max_hot_roller_temp_k=max_hot_k,
         min_hot_roller_temp_k=min_hot_k,
         temperature_overshoot_k=overshoot_k,
+        final_setpoint_error_k=final_error_k,
         average_heater_power_w=avg_power_w,
+        specific_energy_per_released_mj_kg=spec_energy_released_mj_kg,
+        net_specific_energy_per_released_mj_kg=net_spec_energy_released_mj_kg,
     )
