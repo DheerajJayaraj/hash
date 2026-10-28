@@ -29,14 +29,16 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 - **Milestone 6: Methanol production pathway assessment** — IMPLEMENTED & TESTED
 - **Milestone 7: Physical prototype readiness** — IMPLEMENTED (Test plan & validation criteria documented)
 - **Sprint Completion: Hot-Roller Temperature Control & Trustworthy Balances** — IMPLEMENTED & TESTED (126 passed)
+- **Live Showcase Sprint: Interactive Browser Dashboard & Data Export** — IMPLEMENTED & TESTED (129 passed)
 
 ## 5. File Inventory in Isolated Workspace
 
 ### Added Core Engine Files:
 1. `src/dac_sim/sorbent.py`: Solid DAC sorbent thermodynamics and linear-driving-force kinetics ($q_{eq}(T)$, $r_{ads}$, $r_{des}$).
 2. `src/dac_sim/belt.py`: Spatial discretization of the moving sorbent belt loop, zone tracking (adsorption, hot contact, recovery, cooling).
-3. `src/dac_sim/cycle.py`: Coupled transient cycle runner with simultaneous CO2 mass balance and thermal energy conservation.
+3. `src/dac_sim/cycle.py`: Coupled transient cycle runner with simultaneous CO2 mass balance, temperature controller, and thermal energy conservation.
 4. `src/dac_sim/methanol.py`: Downstream CO2 hydrogenation to e-methanol, stoichiometry, H2 electrolysis demand, and exothermic heat recovery.
+5. `src/dac_sim/dashboard.py`: Lightweight HTTP server and presentation-ready single-page dashboard for live browser demonstrations.
 
 ### Modified Files:
 1. `src/dac_sim/fluid_loop.py`: Added `FluidLoop` dataclass with finite property checks, flow conductance, and heat rate functions.
@@ -45,15 +47,18 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 4. `src/dac_sim/prototype.py`: Added `build_prototype_fluid_loop` to instantiate configured fluid loops directly from assumptions.
 5. `src/dac_sim/reporting.py`: Updated `build_energy_report` to report fluid advective and recovery energy.
 6. `scripts/run_prototype_simulation.py`: Integrated intermediate fluid recovery loop into prototype runner.
+7. `scripts/run_dac_cycle_simulation.py`: Updated with temperature control, 3-panel plotting, and full 990 s loop simulation.
 
 ### Added Test Suites:
 1. `tests/test_coupled_fluid_loop.py`: Tests for `FluidLoop` validation, coupling, energy conservation, and stability guards.
-2. `tests/test_sorbent_cycle.py`: Tests for sorbent kinetics, equilibrium capacity, belt movement, and cycle mass/energy balances.
+2. `tests/test_sorbent_cycle.py`: Tests for sorbent kinetics, equilibrium capacity, belt movement, temperature control, and cycle mass/energy balances.
 3. `tests/test_methanol.py`: Tests for methanol stoichiometry, mass conservation, and electrolysis energy requirements.
+4. `tests/test_dashboard.py`: Tests for dashboard validation, simulation API, and HTTP endpoints.
 
 ### Added Scripts and Workflows:
 1. `scripts/run_dac_cycle_simulation.py`: Reproducible multi-cycle transient simulation exporting CSV, JSON report, and PNG plots.
 2. `scripts/run_sensitivity_analysis.py`: Parametric sweep across belt speed, heater power, uptake kinetics, and recovery flow.
+3. `scripts/run_dashboard.py`: Interactive browser dashboard server launch script (`http://127.0.0.1:8050`).
 
 ### Added Documentation Reports:
 1. `reports/assumptions_verification_report.md`: Detailed audit of project assumptions vs literature citations.
@@ -89,8 +94,18 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 ## 8. Test Results
 - Baseline: **107 passed in 1.19s**.
 - Post-Milestones 1-7: **122 passed in 0.52s**.
-- Post-Sprint Completion: **126 passed, 0 failed in 1.14s**.
+- Post-Sprint Completion: **126 passed in 1.14s**.
+- Post-Dashboard Showcase: **129 passed, 0 failed in 2.90s**.
 - `git diff --check`: Clean, zero trailing whitespace or formatting warnings.
+
+## 9. Live Dashboard Launch Instructions
+To launch the interactive presentation dashboard:
+```powershell
+Set-Location "C:\Users\jayar\Downloads\hash_isolated"
+$env:PYTHONPATH = "$PWD\src"
+& "C:\Users\jayar\Downloads\hash\.venv\Scripts\python.exe" scripts/run_dashboard.py
+```
+Open **`http://127.0.0.1:8050`** in any web browser. Adjust parameters, click **"Run Simulation"**, inspect live charts and mass/energy balances, and export data directly.
 
 ## 9. Next Recommended Actions
 1. **Experimental Data Ingestion**: When bench prototype measurements are taken according to `reports/physical_prototype_readiness.md`, ingest CSV traces into `data/experimental/` and calibrate the contact conductance parameters.
