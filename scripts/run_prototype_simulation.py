@@ -1,10 +1,13 @@
-﻿"""Run and report an illustrative DAC prototype thermal simulation."""
+"""Run and report an illustrative DAC prototype thermal simulation."""
 
 from pathlib import Path
 
 import yaml
 
-from dac_sim.prototype import build_prototype_network
+from dac_sim.prototype import (
+    build_prototype_network,
+    build_prototype_fluid_loop,
+)
 from dac_sim.simulation import run_thermal_simulation
 from dac_sim.outputs import export_temperature_history_csv
 from dac_sim.reporting import build_energy_report
@@ -53,6 +56,7 @@ def main() -> None:
     project = assumptions["project"]
     prototype = project["prototype"]["value"]
     ambient_temperature_k = project["ambient_temperature"]["value"]
+    fluid_loop = build_prototype_fluid_loop(assumptions)
 
     result = run_thermal_simulation(
         nodes=nodes,
@@ -62,6 +66,7 @@ def main() -> None:
         external_heat_w=heater,
         ambient_temperature_k=ambient_temperature_k,
         ambient_loss_conductance_w_k=ambient_loss_conductance_w_k,
+        fluid_loops=[fluid_loop],
     )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,6 +94,8 @@ def main() -> None:
     print(f"PNG: {OUTPUT_DIR / 'thermal_history.png'}")
     print(f"External energy: {report['external_energy_j']:.3f} J")
     print(f"Ambient energy: {report['ambient_energy_j']:.3f} J")
+    print(f"Fluid advective energy: {report['fluid_energy_j']:.3f} J")
+    print(f"Fluid heat recovered: {report['fluid_heat_recovered_j']:.3f} J")
     print(
         "Stored energy change: "
         f"{report['stored_energy_change_j']:.3f} J"
@@ -97,6 +104,7 @@ def main() -> None:
         "Energy-balance error: "
         f"{report['energy_balance_error_j']:.9f} J"
     )
+
 
     print("\nFinal temperatures:")
     for name, temperature in report["final_temperatures_k"].items():

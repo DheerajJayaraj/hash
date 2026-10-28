@@ -1,8 +1,9 @@
-﻿"""Lumped thermal model for a roller wall coupled to a flowing fluid."""
+"""Lumped thermal model for a roller wall coupled to a flowing fluid."""
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 
 def _validate_finite(**values: float) -> None:
@@ -13,6 +14,58 @@ def _validate_finite(**values: float) -> None:
             or not math.isfinite(value)
         ):
             raise ValueError(f"{name} must be a finite number.")
+
+
+@dataclass(frozen=True)
+class FluidLoop:
+    """A flowing fluid stream coupled to a thermal node.
+
+    Attributes:
+        node_name: The name of the thermal node where the fluid exchanges heat.
+        mass_flow_rate_kg_s: Fluid mass flow rate [kg/s]. Must be non-negative.
+        fluid_specific_heat_j_kg_k: Fluid isobaric specific heat capacity [J/(kg K)]. Must be positive.
+        inlet_temperature_k: Inflow temperature of the fluid entering the node [K]. Must be positive.
+    """
+
+    node_name: str
+    mass_flow_rate_kg_s: float
+    fluid_specific_heat_j_kg_k: float
+    inlet_temperature_k: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.node_name, str) or not self.node_name.strip():
+            raise ValueError("node_name must be a non-empty string.")
+        _validate_finite(
+            mass_flow_rate_kg_s=self.mass_flow_rate_kg_s,
+            fluid_specific_heat_j_kg_k=self.fluid_specific_heat_j_kg_k,
+            inlet_temperature_k=self.inlet_temperature_k,
+        )
+        if self.mass_flow_rate_kg_s < 0:
+            raise ValueError("mass_flow_rate_kg_s cannot be negative.")
+        if self.fluid_specific_heat_j_kg_k <= 0:
+            raise ValueError("fluid_specific_heat_j_kg_k must be greater than zero.")
+        if self.inlet_temperature_k <= 0:
+            raise ValueError("inlet_temperature_k must be greater than zero K.")
+
+    @property
+    def flow_conductance_w_k(self) -> float:
+        """Effective advective heat-capacity flow rate [W/K]."""
+        return self.mass_flow_rate_kg_s * self.fluid_specific_heat_j_kg_k
+
+    def heat_rate_to_node_w(self, node_temperature_k: float) -> float:
+        """Heat transfer rate from the fluid stream into the node [W].
+
+        Positive means the inflow warms the node (T_in > T_node).
+        Negative means the flowing fluid cools the node (T_node > T_in),
+        recovering heat from the node.
+        """
+        _validate_finite(node_temperature_k=node_temperature_k)
+        if node_temperature_k <= 0:
+            raise ValueError("node_temperature_k must be greater than zero K.")
+        return self.flow_conductance_w_k * (
+            self.inlet_temperature_k - node_temperature_k
+        )
+
 
 
 def fluid_wall_step(

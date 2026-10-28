@@ -1,8 +1,13 @@
-﻿"""Basic thermal calculations for the DAC simulation."""
+"""Basic thermal calculations for the DAC simulation."""
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dac_sim.fluid_loop import FluidLoop
 
 
 def _require_finite(name: str, value: float) -> None:
@@ -239,6 +244,7 @@ def thermal_network_step(
     external_heat_w: dict[str, float] | None = None,
     ambient_temperature_k: float = 298.15,
     ambient_loss_conductance_w_k: dict[str, float] | None = None,
+    fluid_loops: list[FluidLoop] | None = None,
 ) -> list[ThermalNode]:
     """Advance a thermal network by one explicit Euler time step.
 
@@ -248,6 +254,11 @@ def thermal_network_step(
     ambient_loss_conductance_w_k maps node names to non-negative heat-loss
     conductances in W/K. Heat exchange with ambient is calculated as
     -G_loss * (T_node - T_ambient). A node colder than ambient gains heat.
+
+    fluid_loops is an optional list of FluidLoop instances representing
+    flowing fluid streams through nodes. Fluid flow adds advective heat
+    G_flow * (T_inlet - T_node). Positive rates heat the node; negative
+    rates cool the node (recovering heat).
 
     Nodes not listed in either mapping have zero external heat input and
     zero ambient heat-loss conductance.
@@ -289,6 +300,13 @@ def thermal_network_step(
         if conductance < 0:
             raise ValueError("Ambient heat-loss conductance cannot be negative.")
 
+    fluid_loops = [] if fluid_loops is None else list(fluid_loops)
+    for loop in fluid_loops:
+        if loop.node_name not in node_by_name:
+            raise ValueError(
+                f"Fluid loop references unknown node: {loop.node_name!r}."
+            )
+
     net_heat_w = {node.name: 0.0 for node in nodes}
 
     for link in links:
@@ -319,8 +337,13 @@ def thermal_network_step(
         )
         net_heat_w[node.name] += ambient_heat_rate_w
 
+    for loop in fluid_loops:
+        current_node = node_by_name[loop.node_name]
+        fluid_heat_w = loop.heat_rate_to_node_w(current_node.temperature_k)
+        net_heat_w[loop.node_name] += fluid_heat_w
+
     # Enforce a conservative explicit-Euler step limit that prevents
-    # conductive coupling alone from reversing the temperature ordering.
+    # conductive and fluid advective coupling from causing numerical instability.
     total_conductance_w_k = {node.name: 0.0 for node in nodes}
 
     for link in links:
@@ -331,6 +354,9 @@ def thermal_network_step(
         total_conductance_w_k[node.name] += (
             ambient_loss_conductance_w_k.get(node.name, 0.0)
         )
+
+    for loop in fluid_loops:
+        total_conductance_w_k[loop.node_name] += loop.flow_conductance_w_k
 
     fastest_node_rate_per_s = max(
         total_conductance_w_k[node.name]

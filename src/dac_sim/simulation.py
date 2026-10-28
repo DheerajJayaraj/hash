@@ -1,8 +1,12 @@
-﻿"""Transient simulation runner for the DAC thermal network."""
+"""Transient simulation runner for the DAC thermal network."""
 
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dac_sim.fluid_loop import FluidLoop
 
 from dac_sim.thermal import (
     ThermalLink,
@@ -20,17 +24,22 @@ def run_thermal_simulation(
     external_heat_w: dict[str, float] | None = None,
     ambient_temperature_k: float = 298.15,
     ambient_loss_conductance_w_k: dict[str, float] | None = None,
+    fluid_loops: list[FluidLoop] | None = None,
 ) -> dict[str, object]:
     """Simulate a thermal network and record its temperature history.
 
     External heat rates and ambient temperature are held constant.
-    Ambient heat exchange is calculated using the node temperatures at the
-    start of each step, consistent with explicit Euler integration.
+    Ambient heat exchange and fluid advective transfer are calculated using
+    the node temperatures at the start of each step, consistent with
+    explicit Euler integration.
 
     Returns time and temperature histories, cumulative external energy,
-    cumulative ambient energy exchange, internal energy change, and balance
-    error. Positive ambient energy means the surroundings heated the nodes;
-    negative ambient energy means the nodes lost heat to the surroundings.
+    cumulative ambient energy exchange, cumulative fluid energy transfer,
+    internal energy change, and balance error.
+    Positive ambient energy means surroundings heated the nodes; negative
+    means nodes lost heat to surroundings.
+    Positive fluid energy means flowing fluid heated the node; negative
+    fluid energy means fluid cooled the node (heat recovered by fluid stream).
     """
     for name, value in (
         ("duration_s", duration_s),
@@ -97,16 +106,25 @@ def run_thermal_simulation(
                 "Ambient heat-loss conductance cannot be negative."
             )
 
+    fluid_loops = [] if fluid_loops is None else list(fluid_loops)
+    for loop in fluid_loops:
+        if loop.node_name not in node_names:
+            raise ValueError(
+                f"Fluid loop references unknown node: {loop.node_name!r}."
+            )
+
     time_s = [0.0]
     temperature_history_k = {
         node.name: [node.temperature_k] for node in current_nodes
     }
     external_energy_j = 0.0
     ambient_energy_j = 0.0
+    fluid_energy_j = 0.0
     elapsed_s = 0.0
 
     while elapsed_s < duration_s:
         dt = min(time_step_s, duration_s - elapsed_s)
+        node_temps = {node.name: node.temperature_k for node in current_nodes}
 
         # Explicit Euler: calculate ambient exchange from start-of-step
         # temperatures, matching the temperature update in thermal.py.
@@ -119,6 +137,11 @@ def run_thermal_simulation(
             ]
         )
 
+        fluid_rate_w = sum(
+            loop.heat_rate_to_node_w(node_temps[loop.node_name])
+            for loop in fluid_loops
+        )
+
         current_nodes = thermal_network_step(
             current_nodes,
             links,
@@ -126,10 +149,12 @@ def run_thermal_simulation(
             external_heat_w=external_heat_w,
             ambient_temperature_k=ambient_temperature_k,
             ambient_loss_conductance_w_k=ambient_loss_conductance_w_k,
+            fluid_loops=fluid_loops,
         )
 
         external_energy_j += sum(external_heat_w.values()) * dt
         ambient_energy_j += ambient_rate_w * dt
+        fluid_energy_j += fluid_rate_w * dt
         elapsed_s += dt
 
         if math.isclose(
@@ -151,13 +176,17 @@ def run_thermal_simulation(
         for initial, final in zip(initial_nodes, current_nodes)
     )
 
-    total_energy_input_j = external_energy_j + ambient_energy_j
+    total_energy_input_j = (
+        external_energy_j + ambient_energy_j + fluid_energy_j
+    )
 
     return {
         "time_s": time_s,
         "temperature_history_k": temperature_history_k,
         "external_energy_j": external_energy_j,
         "ambient_energy_j": ambient_energy_j,
+        "fluid_energy_j": fluid_energy_j,
+        "fluid_heat_recovered_j": -fluid_energy_j,
         "total_internal_energy_change_j": internal_energy_change_j,
         "energy_balance_error_j": internal_energy_change_j - total_energy_input_j,
     }

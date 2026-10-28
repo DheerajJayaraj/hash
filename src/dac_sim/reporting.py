@@ -1,4 +1,4 @@
-﻿"""Reporting utilities for thermal simulation results."""
+"""Reporting utilities for thermal simulation results."""
 
 from __future__ import annotations
 
@@ -63,15 +63,20 @@ def build_energy_report(result: dict[str, Any]) -> dict[str, Any]:
 
     external_energy = result["external_energy_j"]
     ambient_energy = result["ambient_energy_j"]
+    fluid_energy = result.get("fluid_energy_j", 0.0)
+    fluid_recovered = result.get("fluid_heat_recovered_j", -fluid_energy)
     stored_energy_change = result["total_internal_energy_change_j"]
     balance_error = result["energy_balance_error_j"]
 
-    return {
+    report = {
         "duration_s": times[-1] - times[0],
         "external_energy_j": external_energy,
         "ambient_energy_j": ambient_energy,
-        "total_energy_input_j": external_energy + ambient_energy,
+        "fluid_energy_j": fluid_energy,
+        "fluid_heat_recovered_j": fluid_recovered,
+        "total_energy_input_j": external_energy + ambient_energy + fluid_energy,
         "stored_energy_change_j": stored_energy_change,
         "energy_balance_error_j": balance_error,
         "final_temperatures_k": final_temperatures,
     }
+    return report
