@@ -7,7 +7,7 @@ regeneration, recovery, and cooling zones, coupled to rollers and the fluid loop
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from dac_sim.belt import DiscretizedBelt
@@ -36,6 +36,109 @@ def _require_positive(name: str, value: float) -> None:
 
 
 @dataclass
+class HeaterController:
+    """Configurable temperature controller for the DAC regeneration hot roller.
+
+    Supports physically grounded control strategies:
+        - 'pid': Proportional-Integral-Derivative controller with anti-windup clamping.
+          Smoothly modulates electrical power to maintain target temperature with minimal overshoot.
+        - 'thermostat': Bang-bang relay with configurable deadband (hysteresis).
+          Represents simple bimetallic or on/off temperature switch behavior.
+        - 'proportional': Pure proportional controller with power saturation limits.
+        - 'constant': Constant power output (open-loop baseline).
+    """
+
+    target_temp_k: float = 378.15
+    max_power_w: float = 500.0
+    mode: str = "pid"
+    deadband_k: float = 1.0
+    kp: float = 40.0
+    ki: float = 0.4
+    kd: float = 5.0
+
+    def __post_init__(self) -> None:
+        _require_positive("target_temp_k", self.target_temp_k)
+        _require_positive("max_power_w", self.max_power_w)
+        self.mode = self.mode.lower()
+        if self.mode not in ("pid", "thermostat", "proportional", "constant"):
+            raise ValueError(
+                f"Unsupported heater controller mode: {self.mode!r}. "
+                "Must be 'pid', 'thermostat', 'proportional', or 'constant'."
+            )
+        if (
+            isinstance(self.deadband_k, bool)
+            or not isinstance(self.deadband_k, (int, float))
+            or not math.isfinite(self.deadband_k)
+            or self.deadband_k < 0
+        ):
+            raise ValueError("deadband_k must be a non-negative finite number.")
+        if (
+            isinstance(self.kp, bool)
+            or not isinstance(self.kp, (int, float))
+            or not math.isfinite(self.kp)
+            or self.kp <= 0
+        ):
+            raise ValueError("kp must be a positive finite number.")
+        if (
+            isinstance(self.ki, bool)
+            or not isinstance(self.ki, (int, float))
+            or not math.isfinite(self.ki)
+            or self.ki < 0
+        ):
+            raise ValueError("ki must be a non-negative finite number.")
+        if (
+            isinstance(self.kd, bool)
+            or not isinstance(self.kd, (int, float))
+            or not math.isfinite(self.kd)
+            or self.kd < 0
+        ):
+            raise ValueError("kd must be a non-negative finite number.")
+
+        self._integral: float = 0.0
+        self._prev_error: float = 0.0
+        self._state: bool = True
+
+    def reset(self) -> None:
+        """Reset internal controller state."""
+        self._integral = 0.0
+        self._prev_error = 0.0
+        self._state = True
+
+    def compute_power_w(self, current_temp_k: float, dt_s: float) -> float:
+        """Calculate electrical heater power output [W] for current time step."""
+        if self.mode == "constant":
+            return self.max_power_w
+
+        error = self.target_temp_k - current_temp_k
+
+        if self.mode == "thermostat":
+            if current_temp_k < self.target_temp_k - self.deadband_k:
+                self._state = True
+            elif current_temp_k > self.target_temp_k + self.deadband_k:
+                self._state = False
+            return self.max_power_w if self._state else 0.0
+
+        elif self.mode == "proportional":
+            return max(0.0, min(self.max_power_w, self.kp * error))
+
+        elif self.mode == "pid":
+            d_error = (error - self._prev_error) / dt_s if dt_s > 0 else 0.0
+            self._prev_error = error
+            tentative_power = self.kp * error + self.ki * self._integral + self.kd * d_error
+            power = max(0.0, min(self.max_power_w, tentative_power))
+            # Anti-windup clamping on integral term: only accumulate if not hard saturated
+            if (
+                (0.0 < power < self.max_power_w)
+                or (power == 0.0 and error > 0)
+                or (power == self.max_power_w and error < 0)
+            ):
+                self._integral += error * dt_s
+            return power
+
+        return 0.0
+
+
+@dataclass
 class CycleSimulationResult:
     """Complete results and balances from a coupled DAC cycle simulation."""
 
@@ -46,6 +149,7 @@ class CycleSimulationResult:
     cooling_roller_temp_k: list[float]
     mean_belt_temp_k: list[float]
     mean_belt_loading_mol_kg: list[float]
+    heater_power_w: list[float]
 
     # Mass balance quantities [kg CO2]
     co2_air_fed_kg: float
@@ -77,6 +181,13 @@ class CycleSimulationResult:
     net_specific_thermal_energy_mj_kg: float
     heat_recovery_ratio: float
 
+    # Controller performance metrics
+    target_hot_roller_temp_k: float = 378.15
+    max_hot_roller_temp_k: float = 378.15
+    min_hot_roller_temp_k: float = 378.15
+    temperature_overshoot_k: float = 0.0
+    average_heater_power_w: float = 0.0
+
 
 def run_cycle_simulation(
     belt: DiscretizedBelt,
@@ -84,6 +195,12 @@ def run_cycle_simulation(
     duration_s: float,
     time_step_s: float = 0.1,
     heater_power_w: float = 500.0,
+    target_hot_roller_temp_k: float = 378.15,
+    heater_controller: HeaterController | str | None = "pid",
+    controller_deadband_k: float = 1.0,
+    controller_kp: float = 40.0,
+    controller_ki: float = 0.4,
+    controller_kd: float = 5.0,
     fan_airflow_m3_h: float = 150.0,
     air_co2_concentration_g_m3: float = 0.72,
     ambient_temperature_k: float = 298.15,
@@ -109,12 +226,39 @@ def run_cycle_simulation(
     """Run an auditable coupled transient simulation of the DAC belt system.
 
     Tracks CO2 mass balance and thermal energy conservation across explicit Euler steps.
+    Incorporates active temperature control on the hot regeneration roller to prevent
+    unphysical overheating while conserving energy.
     """
     _require_positive("duration_s", duration_s)
     _require_positive("time_step_s", time_step_s)
     _require_positive("fan_airflow_m3_h", fan_airflow_m3_h)
     _require_positive("air_co2_concentration_g_m3", air_co2_concentration_g_m3)
     _require_positive("ambient_temperature_k", ambient_temperature_k)
+    _require_positive("target_hot_roller_temp_k", target_hot_roller_temp_k)
+
+    # Controller initialization
+    if isinstance(heater_controller, HeaterController):
+        controller = heater_controller
+    elif heater_controller is None or heater_controller == "constant":
+        controller = HeaterController(
+            target_temp_k=target_hot_roller_temp_k,
+            max_power_w=heater_power_w,
+            mode="constant",
+        )
+    elif isinstance(heater_controller, str):
+        controller = HeaterController(
+            target_temp_k=target_hot_roller_temp_k,
+            max_power_w=heater_power_w,
+            mode=heater_controller,
+            deadband_k=controller_deadband_k,
+            kp=controller_kp,
+            ki=controller_ki,
+            kd=controller_kd,
+        )
+    else:
+        raise ValueError(
+            f"Invalid heater_controller: {heater_controller!r}. Expected HeaterController, str, or None."
+        )
 
     # Initial states
     initial_co2_sorbent_kg = belt.total_co2_content_kg
@@ -157,6 +301,8 @@ def run_cycle_simulation(
     hist_rec_k = [recovery_roller_temp_k]
     hist_cool_k = [cooling_roller_temp_k]
     hist_belt_k = [belt.mean_temperature_k]
+    hist_loading = [belt.mean_loading_mol_kg]
+    hist_heater_w = [controller.compute_power_w(hot_roller_temp_k, time_step_s)]
     hist_loading = [belt.mean_loading_mol_kg]
 
     # Time integration loop
@@ -234,8 +380,11 @@ def run_cycle_simulation(
         g_rec_seg = conductance_recovery_belt_w_k / n_rec
         g_cool_seg = conductance_cooling_belt_w_k / n_cool
 
+        # Determine instantaneous heater power from active controller
+        step_heater_power_w = controller.compute_power_w(hot_roller_temp_k, dt)
+
         # Net heat rates on nodes
-        q_hot_roller_w = heater_power_w
+        q_hot_roller_w = step_heater_power_w
         q_rec_roller_w = 0.0
         q_cool_roller_w = 0.0
 
@@ -306,7 +455,7 @@ def run_cycle_simulation(
         )
 
         # Accumulate energies
-        cum_heater_energy_j += heater_power_w * dt
+        cum_heater_energy_j += step_heater_power_w * dt
         cum_ambient_energy_j += (
             (q_amb_hot_w + q_amb_rec_w + q_amb_cool_w) * dt
             + step_amb_belt_energy_j
@@ -320,6 +469,7 @@ def run_cycle_simulation(
         hist_cool_k.append(cooling_roller_temp_k)
         hist_belt_k.append(belt.mean_temperature_k)
         hist_loading.append(belt.mean_loading_mol_kg)
+        hist_heater_w.append(step_heater_power_w)
 
     # Final calculations and balances
     final_co2_sorbent_kg = belt.total_co2_content_kg
@@ -402,6 +552,11 @@ def run_cycle_simulation(
         else 0.0
     )
 
+    max_hot_k = max(hist_hot_k)
+    min_hot_k = min(hist_hot_k)
+    overshoot_k = max(0.0, max_hot_k - target_hot_roller_temp_k)
+    avg_power_w = cum_heater_energy_j / duration_s if duration_s > 0 else 0.0
+
     return CycleSimulationResult(
         time_s=hist_time_s,
         hot_roller_temp_k=hist_hot_k,
@@ -409,6 +564,7 @@ def run_cycle_simulation(
         cooling_roller_temp_k=hist_cool_k,
         mean_belt_temp_k=hist_belt_k,
         mean_belt_loading_mol_kg=hist_loading,
+        heater_power_w=hist_heater_w,
         co2_air_fed_kg=cum_co2_air_fed_kg,
         co2_captured_kg=cum_co2_captured_kg,
         co2_air_untreated_kg=cum_co2_untreated_kg,
@@ -433,4 +589,9 @@ def run_cycle_simulation(
         specific_thermal_energy_mwh_t=spec_energy_mwh_t,
         net_specific_thermal_energy_mj_kg=net_spec_energy_mj_kg,
         heat_recovery_ratio=heat_recovery_ratio,
+        target_hot_roller_temp_k=target_hot_roller_temp_k,
+        max_hot_roller_temp_k=max_hot_k,
+        min_hot_roller_temp_k=min_hot_k,
+        temperature_overshoot_k=overshoot_k,
+        average_heater_power_w=avg_power_w,
     )

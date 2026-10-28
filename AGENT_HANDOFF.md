@@ -28,6 +28,7 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 - **Milestone 5: Engineering assumptions verification** — IMPLEMENTED & TESTED
 - **Milestone 6: Methanol production pathway assessment** — IMPLEMENTED & TESTED
 - **Milestone 7: Physical prototype readiness** — IMPLEMENTED (Test plan & validation criteria documented)
+- **Sprint Completion: Hot-Roller Temperature Control & Trustworthy Balances** — IMPLEMENTED & TESTED (126 passed)
 
 ## 5. File Inventory in Isolated Workspace
 
@@ -60,15 +61,20 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 3. `reports/physical_prototype_readiness.md`: Practical experimental test plan, sensor instrumentation, and safety protocols.
 
 ## 6. Key Design and Physical Decisions
-1. **Fluid Loop Advection Modeling**:
+1. **Hot-Roller Temperature Control & Overheating Resolution**:
+   - *Problem*: In uncontrolled baseline simulations, applying a constant 500 W heater power caused the 2.0 kg hot roller to overheat to ~218.1 °C over 990 s because steady ambient losses (~160 W at 105 °C) and belt contact (~30–40 W) only sum to ~190–200 W. The unconstrained ~300 W excess drove thermal runaway toward 218 °C.
+   - *Solution*: Implemented [`HeaterController`](file:///C:/Users/jayar/Downloads/hash_isolated/src/dac_sim/cycle.py#L40-L135) supporting configurable PID control (`mode='pid'`, default), deadband thermostat (`mode='thermostat'`), proportional control, and constant power.
+   - *Result*: Over a full 990 s revolution at 2 mm/s, the PID controller maintains the hot roller at $378.17\text{ K}$ ($105.02\text{ }^\circ\text{C}$) with minimal overshoot ($+0.11\text{ K}$). Average heater power throttles smoothly from 500 W max down to $190.3\text{ W}$, cutting gross apparent thermal energy from $205.0\text{ MWh/t}$ to $80.8\text{ MWh/t CO}_2$ ($90.25\text{ MJ/kg CO}_2$ net with fluid heat recovery).
+   - *Time-Step Invariance*: Verified across $\Delta t = 0.1\text{ s}$ and $\Delta t = 0.05\text{ s}$; capture rates ($2.355\text{ g/h}$) and average powers match within $< 0.1\%$.
+2. **Fluid Loop Advection Modeling**:
    Fluid advection is modeled via effective heat capacity flow rate $G_{flow} = \dot{m} c_p$ entering at $T_{in}$ and exiting at node temperature $T_{node}$. The heat rate delivered to the node is $\dot{Q} = G_{flow} (T_{in} - T_{node})$. Heat recovered is $-\dot{Q}$. Total energy balances are closed to machine precision ($< 10^{-8}$ J residual).
-2. **Explicit Euler Stability**:
+3. **Explicit Euler Stability**:
    The stability criterion in `thermal.py` was generalized to include fluid advective flow:
    $\Delta t \le 1.0 / \max_i (\frac{\sum G_j + G_{amb, i} + \dot{m}_i c_p}{C_i})$.
-3. **Kinetics-Limited vs Airflow-Limited Capture**:
+4. **Kinetics-Limited vs Airflow-Limited Capture**:
    Airflow of 150 m³/h at 0.72 g/m³ delivers 108 g CO2/h to the adsorption zone. The 16 g exposed sorbent can adsorb at most ~2.8 g CO2/h. Capture is 100% kinetics- and sorbent-mass-limited.
-4. **Bench-Scale Heater vs Reaction Enthalpy**:
-   A 500 W heater for a 2.4 g/h capture rate corresponds to ~200 MWh/t CO2 at bench scale because of roller thermal mass (2 kg aluminum/steel) and ambient standby losses. At production scale with continuous counter-current recovery, thermal demand drops to 1.5–2.0 MWh/t.
+5. **Bench-Scale Heater vs Reaction Enthalpy**:
+   At bench scale, standby ambient losses on a 2 kg metal roller dominate energy demand (~80 MWh/t CO2 with active 105 °C control). The intrinsic thermodynamic desorption enthalpy is 1.6 MWh/t CO2 (5.76 MJ/kg). Multi-layer insulated production scale drops total thermal demand to 1.5–2.0 MWh/t CO2.
 
 ## 7. Exact Commands Executed
 - Test execution:
@@ -82,7 +88,8 @@ Advance the engineering and physics simulation for the **Heat-Linked Roller Belt
 
 ## 8. Test Results
 - Baseline: **107 passed in 1.19s**.
-- Final: **122 passed, 0 failed in 0.52s**.
+- Post-Milestones 1-7: **122 passed in 0.52s**.
+- Post-Sprint Completion: **126 passed, 0 failed in 1.14s**.
 - `git diff --check`: Clean, zero trailing whitespace or formatting warnings.
 
 ## 9. Next Recommended Actions

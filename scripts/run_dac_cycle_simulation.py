@@ -39,6 +39,7 @@ def export_cycle_csv(result, output_path: Path) -> None:
             "cooling_roller_temp_k",
             "mean_belt_temp_k",
             "mean_belt_loading_mol_kg",
+            "heater_power_w",
         ])
         for i in range(len(result.time_s)):
             writer.writerow([
@@ -48,29 +49,39 @@ def export_cycle_csv(result, output_path: Path) -> None:
                 f"{result.cooling_roller_temp_k[i]:.3f}",
                 f"{result.mean_belt_temp_k[i]:.3f}",
                 f"{result.mean_belt_loading_mol_kg[i]:.6f}",
+                f"{result.heater_power_w[i]:.2f}",
             ])
 
 
 def plot_cycle_results(result, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
 
-    # Top panel: Temperatures
-    ax1.plot(result.time_s, result.hot_roller_temp_k, label="Hot Roller (Regeneration)", color="#d95f02", lw=1.8)
+    # Top panel: Temperatures with setpoint target
+    ax1.plot(result.time_s, result.hot_roller_temp_k, label="Hot Roller (Regeneration)", color="#d95f02", lw=2.0)
+    ax1.axhline(result.target_hot_roller_temp_k, color="#e41a1c", ls=":", lw=1.5, label=f"Target Setpoint ({result.target_hot_roller_temp_k - 273.15:.0f} °C)")
     ax1.plot(result.time_s, result.recovery_roller_temp_k, label="Intermediate Recovery Roller", color="#7570b3", lw=1.8)
     ax1.plot(result.time_s, result.cooling_roller_temp_k, label="Cooling Roller", color="#1b9e77", lw=1.8)
     ax1.plot(result.time_s, result.mean_belt_temp_k, label="Mean Belt Temperature", color="#e7298a", ls="--")
     ax1.set_ylabel("Temperature (K)")
-    ax1.set_title("DAC Cycle Simulation — Thermal History and Sorbent Loading")
+    ax1.set_title("DAC Continuous Cycle Simulation — Temperature, Power, and Loading")
     ax1.grid(True, alpha=0.3)
-    ax1.legend(loc="upper right", framealpha=0.9)
+    ax1.legend(loc="upper right", framealpha=0.9, fontsize=9)
 
-    # Bottom panel: Mean loading
-    ax2.plot(result.time_s, result.mean_belt_loading_mol_kg, label="Mean Sorbent Loading (mol CO2/kg)", color="#386cb0", lw=2.0)
-    ax2.set_xlabel("Time (s)")
-    ax2.set_ylabel("CO2 Loading (mol/kg)")
+    # Middle panel: Heater Electrical Power
+    ax2.plot(result.time_s, result.heater_power_w, label="Heater Power (W)", color="#ff7f00", lw=1.8)
+    ax2.axhline(result.average_heater_power_w, color="#377eb8", ls="--", lw=1.5, label=f"Avg Power ({result.average_heater_power_w:.1f} W)")
+    ax2.set_ylabel("Power (W)")
+    ax2.set_ylim(-10.0, 520.0)
     ax2.grid(True, alpha=0.3)
-    ax2.legend(loc="lower right", framealpha=0.9)
+    ax2.legend(loc="upper right", framealpha=0.9, fontsize=9)
+
+    # Bottom panel: Mean sorbent loading
+    ax3.plot(result.time_s, result.mean_belt_loading_mol_kg, label="Mean Sorbent Loading (mol CO2/kg)", color="#386cb0", lw=2.0)
+    ax3.set_xlabel("Time (s)")
+    ax3.set_ylabel("CO2 Loading (mol/kg)")
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(loc="lower right", framealpha=0.9, fontsize=9)
 
     fig.tight_layout()
     fig.savefig(output_path, dpi=160)
@@ -87,14 +98,16 @@ def main() -> None:
         initial_loading_mol_kg=0.08,
     )
 
-    # Run for 300 seconds (~0.3 complete revolution to evaluate transient cycle dynamics)
-    duration_s = 300.0
+    # Run for 990 seconds (one complete revolution of the 1.98m loop at 2mm/s)
+    duration_s = 990.0
     result = run_cycle_simulation(
         belt=belt,
         sorbent_props=sorbent_props,
         duration_s=duration_s,
         time_step_s=0.1,
         heater_power_w=500.0,
+        target_hot_roller_temp_k=378.15,
+        heater_controller="pid",
         fan_airflow_m3_h=150.0,
         air_co2_concentration_g_m3=0.72,
         ambient_temperature_k=298.15,
@@ -112,6 +125,15 @@ def main() -> None:
 
     report_dict = {
         "simulation_duration_s": result.duration_s,
+        "temperature_control": {
+            "controller_type": "pid",
+            "target_temperature_k": result.target_hot_roller_temp_k,
+            "max_hot_roller_temp_k": round(result.max_hot_roller_temp_k, 3),
+            "min_hot_roller_temp_k": round(result.min_hot_roller_temp_k, 3),
+            "temperature_overshoot_k": round(result.temperature_overshoot_k, 3),
+            "average_heater_power_w": round(result.average_heater_power_w, 2),
+            "maximum_heater_power_w": 500.0,
+        },
         "co2_mass_balance": {
             "air_fed_kg": result.co2_air_fed_kg,
             "captured_kg": result.co2_captured_kg,
@@ -135,27 +157,31 @@ def main() -> None:
             "energy_balance_residual_j": result.energy_balance_residual_j,
         },
         "performance_kpis": {
-            "predicted_capture_rate_g_h": result.capture_rate_g_h,
-            "specific_thermal_energy_mj_kg": result.specific_thermal_energy_mj_kg,
-            "specific_thermal_energy_mwh_t": result.specific_thermal_energy_mwh_t,
-            "net_specific_thermal_energy_mj_kg": result.net_specific_thermal_energy_mj_kg,
-            "heat_recovery_ratio": result.heat_recovery_ratio,
+            "predicted_capture_rate_g_h": round(result.capture_rate_g_h, 4),
+            "gross_specific_thermal_energy_mj_kg": round(result.specific_thermal_energy_mj_kg, 2),
+            "gross_specific_thermal_energy_mwh_t": round(result.specific_thermal_energy_mwh_t, 2),
+            "net_specific_thermal_energy_mj_kg": round(result.net_specific_thermal_energy_mj_kg, 2),
+            "net_specific_thermal_energy_mwh_t": round((result.net_specific_thermal_energy_mj_kg * 1e6 / 3.6e9) * 1000.0, 2),
+            "heat_recovery_ratio": round(result.heat_recovery_ratio, 4),
+            "reaction_minimum_enthalpy_mwh_t": 1.60,
         },
         "final_temperatures_k": {
-            "hot_roller": result.hot_roller_temp_k[-1],
-            "recovery_roller": result.recovery_roller_temp_k[-1],
-            "cooling_roller": result.cooling_roller_temp_k[-1],
-            "mean_belt": result.mean_belt_temp_k[-1],
+            "hot_roller": round(result.hot_roller_temp_k[-1], 3),
+            "recovery_roller": round(result.recovery_roller_temp_k[-1], 3),
+            "cooling_roller": round(result.cooling_roller_temp_k[-1], 3),
+            "mean_belt": round(result.mean_belt_temp_k[-1], 3),
         },
     }
 
     with json_file.open("w", encoding="utf-8") as f:
         json.dump(report_dict, f, indent=2)
 
-    print("\n" + "=" * 60)
-    print("DAC FULL-CYCLE COUPLED SIMULATION COMPLETED")
-    print("=" * 60)
-    print(f"Duration: {result.duration_s:.1f} s")
+    print("\n" + "=" * 65)
+    print("DAC FULL-CYCLE COUPLED SIMULATION COMPLETED (WITH TEMPERATURE CONTROL)")
+    print("=" * 65)
+    print(f"Duration: {result.duration_s:.1f} s (1.0 full loop revolution)")
+    print(f"Hot Roller Temp: Target {result.target_hot_roller_temp_k:.2f} K | Max {result.max_hot_roller_temp_k:.2f} K | Overshoot {result.temperature_overshoot_k:.2f} K")
+    print(f"Average Heater Power: {result.average_heater_power_w:.1f} W (Throttled from 500 W max)")
     print(f"Predicted Capture Rate: {result.capture_rate_g_h:.3f} g CO2/h")
     print(f"CO2 Captured: {result.co2_captured_kg * 1000.0:.3f} g")
     print(f"CO2 Released in Regen: {result.co2_released_kg * 1000.0:.3f} g")
@@ -164,12 +190,12 @@ def main() -> None:
     print(f"Fluid Heat Recovered: {result.fluid_heat_recovered_j / 1e3:.2f} kJ")
     print(f"Heat Recovery Ratio: {result.heat_recovery_ratio * 100.0:.1f}%")
     print(f"Energy Balance Residual: {result.energy_balance_residual_j:.3e} J")
-    print(f"Specific Thermal Energy: {result.specific_thermal_energy_mwh_t:.2f} MWh/t CO2")
+    print(f"Gross Specific Thermal Energy: {result.specific_thermal_energy_mwh_t:.2f} MWh/t CO2")
     print(f"Net Specific Thermal Energy: {result.net_specific_thermal_energy_mj_kg:.2f} MJ/kg CO2")
     print(f"CSV exported: {csv_file}")
     print(f"JSON report: {json_file}")
     print(f"Plot saved: {plot_file}")
-    print("=" * 60 + "\n")
+    print("=" * 65 + "\n")
 
 
 if __name__ == "__main__":

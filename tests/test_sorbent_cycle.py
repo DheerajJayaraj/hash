@@ -12,7 +12,7 @@ from dac_sim.sorbent import (
     desorption_rate_mol_kg_s,
 )
 from dac_sim.belt import DiscretizedBelt, BeltSegment, BeltZoneLayout
-from dac_sim.cycle import run_cycle_simulation, CycleSimulationResult
+from dac_sim.cycle import run_cycle_simulation, CycleSimulationResult, HeaterController
 
 
 @pytest.fixture
@@ -129,7 +129,10 @@ def test_cycle_simulation_mass_and_energy_conservation(assumptions_data):
 
     # Energy balance
     assert result.energy_balance_residual_j == pytest.approx(0.0, abs=1e-8)
-    assert result.heater_energy_j == pytest.approx(500.0 * 20.0)
+    assert result.heater_energy_j > 0.0
+    assert result.heater_energy_j == pytest.approx(
+        result.average_heater_power_w * result.duration_s, rel=1e-6
+    )
     assert result.total_energy_absorbed_j == pytest.approx(
         result.total_energy_input_j, abs=1e-8
     )
@@ -138,3 +141,115 @@ def test_cycle_simulation_mass_and_energy_conservation(assumptions_data):
     assert result.capture_rate_g_h > 0.0
     assert result.specific_thermal_energy_mj_kg > 0.0
     assert result.specific_thermal_energy_mwh_t > 0.0
+    assert len(result.heater_power_w) == len(result.time_s)
+
+
+def test_cycle_simulation_constant_heater_mode(assumptions_data):
+    belt = DiscretizedBelt.from_assumptions(
+        assumptions_data, num_segments=30, initial_temperature_k=298.15, initial_loading_mol_kg=0.1
+    )
+    props = SorbentProperties.from_assumptions(assumptions_data)
+
+    result = run_cycle_simulation(
+        belt=belt,
+        sorbent_props=props,
+        duration_s=20.0,
+        time_step_s=0.1,
+        heater_power_w=500.0,
+        heater_controller="constant",
+    )
+
+    # In constant mode, heater delivers exactly 500 W for 20 s = 10,000 J
+    assert result.heater_energy_j == pytest.approx(500.0 * 20.0)
+    assert result.energy_balance_residual_j == pytest.approx(0.0, abs=1e-8)
+    assert result.average_heater_power_w == pytest.approx(500.0)
+
+
+def test_heater_controller_unit():
+    # Validation errors
+    with pytest.raises(ValueError):
+        HeaterController(target_temp_k=-10.0)
+    with pytest.raises(ValueError):
+        HeaterController(max_power_w=0.0)
+    with pytest.raises(ValueError):
+        HeaterController(mode="invalid_mode")
+    with pytest.raises(ValueError):
+        HeaterController(deadband_k=-1.0)
+    with pytest.raises(ValueError):
+        HeaterController(kp=-5.0)
+
+    # Constant mode
+    ctrl_const = HeaterController(max_power_w=500.0, mode="constant")
+    assert ctrl_const.compute_power_w(350.0, 0.1) == 500.0
+    assert ctrl_const.compute_power_w(400.0, 0.1) == 500.0
+
+    # Thermostat mode with deadband
+    ctrl_thermo = HeaterController(target_temp_k=378.15, max_power_w=500.0, mode="thermostat", deadband_k=1.0)
+    # Cold: full power
+    assert ctrl_thermo.compute_power_w(375.0, 0.1) == 500.0
+    # In deadband from below: stays ON
+    assert ctrl_thermo.compute_power_w(378.0, 0.1) == 500.0
+    # Over target + deadband (> 379.15): turns OFF
+    assert ctrl_thermo.compute_power_w(379.5, 0.1) == 0.0
+    # In deadband from above: stays OFF
+    assert ctrl_thermo.compute_power_w(378.0, 0.1) == 0.0
+    # Drops below target - deadband (< 377.15): turns ON
+    assert ctrl_thermo.compute_power_w(377.0, 0.1) == 500.0
+
+    # Proportional mode
+    ctrl_prop = HeaterController(target_temp_k=378.15, max_power_w=500.0, mode="proportional", kp=50.0)
+    # Error = 2 K -> 100 W
+    assert ctrl_prop.compute_power_w(376.15, 0.1) == pytest.approx(100.0)
+    # Error = 20 K -> 1000 W capped at 500 W
+    assert ctrl_prop.compute_power_w(358.15, 0.1) == 500.0
+    # At or above target -> 0 W
+    assert ctrl_prop.compute_power_w(378.15, 0.1) == 0.0
+    assert ctrl_prop.compute_power_w(380.15, 0.1) == 0.0
+
+
+def test_hot_roller_temperature_control_990s(assumptions_data):
+    """Verify hot roller maintains 105 C (378.15 K) without unphysical runaway over a full 990s cycle."""
+    belt = DiscretizedBelt.from_assumptions(
+        assumptions_data, num_segments=40, initial_temperature_k=298.15, initial_loading_mol_kg=0.08
+    )
+    props = SorbentProperties.from_assumptions(assumptions_data)
+
+    # PID control
+    result_pid = run_cycle_simulation(
+        belt=belt,
+        sorbent_props=props,
+        duration_s=990.0,
+        time_step_s=0.1,
+        heater_controller="pid",
+        target_hot_roller_temp_k=378.15,
+        heater_power_w=500.0,
+    )
+
+    # Roller temperature must stay near 105 C and NOT exceed 106 C (no runaway to 218 C)
+    assert result_pid.max_hot_roller_temp_k < 379.0  # < 105.85 C
+    assert result_pid.temperature_overshoot_k < 0.5   # < 0.5 K overshoot
+    assert result_pid.hot_roller_temp_k[-1] == pytest.approx(378.15, abs=0.5)
+    # Average power should reflect ~180-200 W steady loss rather than 500 W
+    assert 170.0 < result_pid.average_heater_power_w < 210.0
+    # Gross specific energy drops from ~205 MWh/t to realistic bench ~75-85 MWh/t
+    assert 70.0 < result_pid.specific_thermal_energy_mwh_t < 90.0
+    # Energy balance strictly closed
+    assert result_pid.energy_balance_residual_j == pytest.approx(0.0, abs=1e-8)
+    assert result_pid.mass_balance_residual_kg == pytest.approx(0.0, abs=1e-12)
+
+
+def test_time_step_independence(assumptions_data):
+    """Verify simulation is insensitive to time-step reduction (dt=0.1 vs dt=0.05)."""
+    props = SorbentProperties.from_assumptions(assumptions_data)
+
+    belt1 = DiscretizedBelt.from_assumptions(assumptions_data, num_segments=30)
+    res_dt1 = run_cycle_simulation(belt1, props, duration_s=100.0, time_step_s=0.1)
+
+    belt2 = DiscretizedBelt.from_assumptions(assumptions_data, num_segments=30)
+    res_dt2 = run_cycle_simulation(belt2, props, duration_s=100.0, time_step_s=0.05)
+
+    # Capture rates and average powers should match within 0.1%
+    assert res_dt1.capture_rate_g_h == pytest.approx(res_dt2.capture_rate_g_h, rel=1e-3)
+    assert res_dt1.average_heater_power_w == pytest.approx(res_dt2.average_heater_power_w, rel=5e-3)
+    assert res_dt1.energy_balance_residual_j == pytest.approx(0.0, abs=1e-8)
+    assert res_dt2.energy_balance_residual_j == pytest.approx(0.0, abs=1e-8)
